@@ -3,6 +3,8 @@ from PIL import Image, ImageDraw
 import os
 from fpdf import FPDF
 from tqdm import tqdm
+from io import BytesIO
+import tempfile
 
 # I want to switch the use of reportlab to fpdf
 
@@ -91,26 +93,43 @@ def draw_grid(pdf, num_rows, num_cols, cell_width, cell_height, x_margin, y_marg
         x = col * cell_width + x_margin
         pdf.line(x, y_bleed, x, page_size[1] - y_bleed)
 
-def draw_grid2(draw, num_rows, num_cols, cell_width, cell_height, x_margin, y_margin, page_size, bleed=10):
-    """
-    Draws a grid on the image canvas to separate cards.
+def create_pdf_with_fpdf_2(images, page_size, grid_size, card_size_pixels, output_pdf, dpi=300):
+    pdf = FPDF(unit="pt", format=page_size)
+    images_per_page = grid_size[0] * grid_size[1]
+    
+    # Calculate the size of the full page in pixels (for 300 DPI)
+    page_width_pixels = int(page_size[0] * dpi / 72)
+    page_height_pixels = int(page_size[1] * dpi / 72)
 
-    Args:
-    - draw: ImageDraw object for drawing on the canvas.
-    - num_rows, num_cols: Grid dimensions.
-    - cell_width, cell_height: Dimensions of each grid cell.
-    - x_margin, y_margin: Margins from the edges of the page.
-    - page_size: Size of the PDF page.
-    - bleed: Extra line length for aesthetics.
-    """
-    x_bleed, y_bleed = x_margin - bleed, y_margin - bleed
-    for row in range(num_rows + 1):
-        y = row * cell_height + y_margin
-        draw.line([(x_bleed, y), (page_size[0] - x_bleed, y)], fill="black")
-    for col in range(num_cols + 1):
-        x = col * cell_width + x_margin
-        draw.line([(x, y_bleed), (x, page_size[1] - y_bleed)], fill="black")
+    for page_start in tqdm(range(0, len(images), images_per_page), desc="Creating PDF pages"):
+        pdf.add_page()
+        
+        # Create a composite image for the whole page at 300 DPI
+        page_image = Image.new('RGB', (page_width_pixels, page_height_pixels), "white")
+        
+        # Loop over the images that will go on this page
+        for idx in range(images_per_page):
+            if page_start + idx >= len(images): 
+                break
+            image = images[page_start + idx]
+            col = idx % grid_size[0]
+            row = idx // grid_size[0]
+            x_offset = int(col * card_size_pixels[0])
+            y_offset = int(row * card_size_pixels[1])
+            
+            # Scale and paste the image onto the composite image
+            scaled_image = scale_image_to_card(image, card_size_pixels)
+            page_image.paste(scaled_image, (x_offset, y_offset))
 
+        # Save the composite image to a temporary file
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as temp_image_file:
+            page_image.save(temp_image_file, format='PNG', dpi=(dpi, dpi))
+            temp_image_file.flush()  # Ensure all data is written to disk
+            # Add the whole page image to the PDF
+            pdf.image(temp_image_file.name, x=0, y=0, w=page_size[0], h=page_size[1])
+        
+    # Save the PDF to disk
+    pdf.output(output_pdf)
 def create_pdf_with_fpdf(images, page_size, grid_size, card_size, output_pdf):
     """
     Creates a PDF file from a list of images, placing them in a grid using FPDF.
@@ -139,7 +158,7 @@ def create_pdf_with_fpdf(images, page_size, grid_size, card_size, output_pdf):
         # Draw the grid
         draw_grid(pdf, grid_size[1], grid_size[0], card_size[0], card_size[1], x_margin, y_margin, page_size)
         
-        for idx in range(images_per_page):
+        for idx in tqdm(range(images_per_page), desc="Adding images to page"):
             if page + idx >= len(images): break
             image = images[page + idx]
             row, col = divmod(idx, grid_size[0])
@@ -152,7 +171,9 @@ def create_pdf_with_fpdf(images, page_size, grid_size, card_size, output_pdf):
             pdf.image(temp_image_path, x=x_offset, y=y_offset, w=card_size[0], h=card_size[1])
             os.remove(temp_image_path)
         
+    print("Saving PDF...")
     pdf.output(output_pdf)
+    print("PDF saved as:", output_pdf)
 
 def main():
     IMAGE_DIR = "all_files"
@@ -169,14 +190,13 @@ def main():
     
 
     print("Step 1: Reading PNG Files")
-    image_files = read_png_files(IMAGE_DIR)[:81]
+    image_files = read_png_files(IMAGE_DIR)
 
     print("Step 2: Resizing Images")
     CARD_SIZE = (pixel_width, pixel_height)
     resized_images = list(resize_images(image_files, IMAGE_DIR, CARD_SIZE))
 
     print("Step 3: Creating PDF")
-    #create_pdf(resized_images, PAGE_SIZE, GRID_SIZE, CARD_SIZE, OUTPUT_PDF)
     # Convert card size to points for PDF placement
     card_size_points = (mm_to_points(mm_width), mm_to_points(mm_height))
     create_pdf_with_fpdf(resized_images, PAGE_SIZE, GRID_SIZE, card_size_points, OUTPUT_PDF)

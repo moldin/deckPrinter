@@ -30,4 +30,7 @@ if ! cmp -s requirements.txt .venv/.installed 2>/dev/null; then
   cp requirements.txt .venv/.installed
 fi
 
-.venv/bin/python -m webapp.server || fail "Deckprint stopped with an error (see above)."
+.venv/bin/python -m webapp.server
+code=$?
+# 0 = normal exit, 130/143 = stopped with Ctrl+C or by closing the window.
+case $code in 0|130|143) ;; *) fail "Deckprint stopped with an error (see above)." ;; esac

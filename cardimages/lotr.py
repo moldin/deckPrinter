@@ -212,13 +212,29 @@ class Store(BaseStore):
         return e and {"octgnid": octgnid, **e, "faces": self.faces(e["faces"])}
 
     def resolve_deck(self, source):
-        """source: RingsDB decklist/deck URL, numeric decklist id, or path to an .o8d file."""
+        """All entries of all decks behind `source` (see load)."""
+        return [e for deck in self.load(source) for e in deck["entries"]]
+
+    def load(self, source):
+        """source: RingsDB decklist/deck/fellowship URL, numeric decklist id, or path to an
+        .o8d file. Returns a list of {name, url, entries} (fellowships hold several decks)."""
         if os.path.exists(source):
-            return self._from_o8d(source)
+            return [self._from_o8d(source)]
+        if "/fellowship/view/" in source:
+            # Fellowship pages have no API; their "Play on DragnCards" link lists the decks.
+            page = (fetch(source) or b"").decode("utf-8", "replace")
+            m = re.search(r"external/ringsdb/([^\"']+)", page)
+            pairs = re.findall(r"(decklist|deck)/(\d+)", m.group(1)) if m else []
+            if not pairs:
+                raise ValueError(f"No decks found in fellowship {source} (is it public?)")
+            return [self._from_ringsdb(kind, deck_id) for kind, deck_id in pairs]
         m = re.search(r"/(decklist|deck)/view/(\d+)", source)
         kind, deck_id = (m.group(1), m.group(2)) if m else ("decklist", source.strip())
         if not deck_id.isdigit():
             raise ValueError(f"Not a RingsDB deck url, id or existing file: {source}")
+        return [self._from_ringsdb(kind, deck_id)]
+
+    def _from_ringsdb(self, kind, deck_id):
         deck = fetch_json(f"{RINGSDB}/api/public/{kind}/{deck_id}")
         if deck is None:
             raise ValueError(f"RingsDB {kind} {deck_id} not found (private decks must be shared)")
@@ -230,7 +246,9 @@ class Store(BaseStore):
                 sec = "Hero" if section == "Main" and code in heroes else section
                 entries.append({**self.entry(sec, qty, card, code), "octgnid": card.get("octgnid")})
         order = {"Hero": 0, "Main": 1, "Sideboard": 2}
-        return sorted(entries, key=lambda e: (order[e["section"]], e["code"]))
+        entries.sort(key=lambda e: (order[e["section"]], e["code"]))
+        return {"name": deck.get("name") or f"RingsDB {deck_id}",
+                "url": f"{RINGSDB}/{kind}/view/{deck_id}", "entries": entries}
 
     def _from_o8d(self, path):
         entries = []
@@ -240,7 +258,8 @@ class Store(BaseStore):
                 found = self.by_octgnid(octgnid) or {"name": (card.text or "").strip()}
                 entries.append({**self.entry(section.get("name"), int(card.get("qty", 1)), found),
                                 "octgnid": octgnid})
-        return entries
+        name = os.path.splitext(os.path.basename(path))[0]
+        return {"name": name, "url": None, "entries": entries}
 
     def status(self):
         index = self.index

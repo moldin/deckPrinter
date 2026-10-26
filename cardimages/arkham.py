@@ -103,7 +103,10 @@ class Store(BaseStore):
         return {**c, "faces": self.faces(faces)}
 
     def resolve_deck(self, source):
-        """source: ArkhamDB decklist/deck URL or numeric decklist id."""
+        return self.load(source)[0]["entries"]
+
+    def load(self, source):
+        """source: ArkhamDB decklist/deck URL or numeric decklist id. Returns [{name, url, entries}]."""
         m = re.search(r"/(decklist|deck)/view/(\d+)", source)
         kind, deck_id = (m.group(1), m.group(2)) if m else ("decklist", source.strip())
         if not deck_id.isdigit():
@@ -115,7 +118,8 @@ class Store(BaseStore):
         for section, slots in (("Main", deck.get("slots") or {}), ("Sideboard", deck.get("sideSlots") or {})):
             for code, qty in sorted(slots.items()):
                 entries.append(self.entry(section, qty, self.by_code(code) or {}, code))
-        return entries
+        return [{"name": deck.get("name") or f"ArkhamDB {deck_id}",
+                 "url": f"{ARKHAMDB}/{kind}/view/{deck_id}", "entries": entries}]
 
     def _investigator(self, deck):
         """Parallel investigators: meta.alternate_front / alternate_back swap one side."""

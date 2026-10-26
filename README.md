@@ -14,7 +14,20 @@ python3 -m cardimages arkham sync              # ~6,000 Arkham cards incl. encou
 
 Re-run `sync` whenever new packs appear. It only downloads what is missing.
 
-## Use
+## Web app
+
+Double-click `Deckprint.command`, or run `.venv/bin/python -m webapp.server`, which opens
+http://127.0.0.1:8790 in your browser.
+
+- Paste one or more RingsDB / ArkhamDB links (decklists, shared decks, RingsDB fellowships).
+  The game is detected from the link. You can also drop `.o8d` files on the page.
+- The page previews every card with thumbnails, flags double-sided, landscape and low-res
+  cards, and lets you change quantities. Set 0 for cards you own.
+- **Skapa PDF** downloads at once (~0.2 s for 200 cards). Each deck starts on its own sheet.
+  The page then tells you which pages to print double-sided and reminds you to print at 100 %.
+- Options (paper, backs, gap) and recent decks are remembered in the browser.
+
+## CLI
 
 ```bash
 python3 -m cardimages lotr deck https://ringsdb.com/decklist/view/951   # list cards + image status

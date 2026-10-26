@@ -46,8 +46,9 @@ def printable(path, landscape, back=False):
     return out
 
 
-def slots_for(entries, sideboard, backs):
-    """One slot per physical card copy: {size, front, back} with ready-to-embed paths."""
+def slots_for(entries, sideboard, backs, group=0):
+    """One slot per physical card copy: {size, group, front, back} with ready-to-embed paths.
+    Each group (deck) starts on a fresh page so printed decks never share a sheet."""
     slots, missing = [], []
     for e in entries:
         if e["section"] == "Sideboard" and not sideboard:
@@ -62,7 +63,7 @@ def slots_for(entries, sideboard, backs):
             back = printable(f["path"], f["orientation"] == "landscape", back=True)
         elif backs == "all" and e.get("card_back"):
             back = printable(e["card_back"], False, back=True)
-        slot = {"size": front.get("size") or "standard", "name": e["name"],
+        slot = {"size": front.get("size") or "standard", "group": group, "name": e["name"],
                 "front": printable(front["path"], front["orientation"] == "landscape"), "back": back}
         slots.extend([slot] * e["qty"])
     return slots, missing
@@ -92,14 +93,18 @@ def trim_marks(pdf, cols, rows, x0, y0, card, gap):
         pdf.line(xs[-1] + 1, y, xs[-1] + 1 + MARK_MM, y)
 
 
-def render(slots, output, paper="a4", gap=0.0, margin=8.0, backs="auto"):
+def render(slots, output=None, paper="a4", gap=0.0, margin=8.0, backs="auto"):
+    """Writes the PDF to `output`, or returns its bytes when output is None.
+    Returns (page_count, duplex_start_pages, pdf_bytes_or_None)."""
     paper_mm = PAPER_MM[paper]
     pdf = FPDF(unit="mm", format=paper_mm)
     pdf.set_auto_page_break(False)
     duplex = []     # 1-based page numbers that start a front/back pair
-    for size in CARD_MM:
+    groups = list(dict.fromkeys(s["group"] for s in slots))
+    for g, size in ((g, size) for g in groups for size in CARD_MM):
         # Double-sided cards first, so in auto mode only the leading pages need a back page.
-        group = sorted((s for s in slots if s["size"] == size), key=lambda s: s["back"] is None)
+        group = sorted((s for s in slots if s["size"] == size and s["group"] == g),
+                       key=lambda s: s["back"] is None)
         if not group:
             continue
         card = CARD_MM[size]
@@ -121,8 +126,10 @@ def render(slots, output, paper="a4", gap=0.0, margin=8.0, backs="auto"):
                         col = cols - 1 - col    # long-edge duplex mirrors left/right
                     pdf.image(slot[side], x=x0 + col * (card[0] + gap), y=y0 + row * (card[1] + gap),
                               w=card[0], h=card[1])
-    pdf.output(output)
-    return pdf.pages_count, duplex
+    if output:
+        pdf.output(output)
+        return pdf.pages_count, duplex, None
+    return pdf.pages_count, duplex, bytes(pdf.output())
 
 
 def main():
@@ -141,7 +148,7 @@ def main():
     slots, missing = slots_for(entries, args.sideboard, args.backs)
     for e in missing:
         print(f"warning: no image for {e['qty']}x {e['name']} ({e['code']})", file=sys.stderr)
-    pages, duplex = render(slots, args.output, args.paper, args.gap, args.margin, args.backs)
+    pages, duplex, _ = render(slots, args.output, args.paper, args.gap, args.margin, args.backs)
     print(f"{len(slots)} cards on {pages} pages -> {args.output}")
     if duplex:
         ranges = ", ".join(f"{p}-{p + 1}" for p in duplex)

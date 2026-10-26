@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deckprint</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Deck<span>print</span></div>
+    <div class="library" id="library">Läser bildsamlingen…</div>
+  </header>
+
+  <main class="layout">
+    <section class="content">
+      <form class="intake" id="intake">
+        <label for="sources" class="intake-label">Länk till RingsDB eller ArkhamDB</label>
+        <div class="intake-row">
+          <textarea id="sources" rows="1" spellcheck="false"
+            placeholder="https://ringsdb.com/decklist/view/951"></textarea>
+          <button type="submit" class="btn primary" id="fetch-btn">Hämta</button>
+        </div>
+        <div class="intake-hints">
+          <span>Klistra in så hämtas leken direkt. Fellowships och flera länkar går bra. Släpp en <b>.o8d</b>-fil var som helst.</span>
+          <span class="id-game">Bara id-nummer:
+            <label><input type="radio" name="game" value="lotr" checked> LotR</label>
+            <label><input type="radio" name="game" value="arkham"> Arkham</label>
+          </span>
+        </div>
+        <div class="recent" id="recent"></div>
+      </form>
+
+      <div class="errors" id="errors" hidden></div>
+      <div id="decks"></div>
+
+      <div class="empty" id="empty">
+        <div class="empty-cards"><i></i><i></i><i></i></div>
+        <p>Ingen lek än. Klistra in en länk ovan.</p>
+      </div>
+    </section>
+
+    <aside class="panel" id="panel">
+      <h2>Utskrift</h2>
+      <div class="field">
+        <span class="field-label">Papper</span>
+        <div class="seg" data-opt="paper">
+          <button type="button" data-v="a4" class="on">A4</button>
+          <button type="button" data-v="letter">Letter</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-label">Baksidor</span>
+        <div class="seg" data-opt="backs">
+          <button type="button" data-v="auto" class="on">Auto</button>
+          <button type="button" data-v="all">Alla</button>
+          <button type="button" data-v="none">Inga</button>
+        </div>
+        <p class="hint" id="backs-hint"></p>
+      </div>
+      <div class="field">
+        <span class="field-label">Mellanrum</span>
+        <div class="seg" data-opt="gap">
+          <button type="button" data-v="0" class="on">Kant i kant</button>
+          <button type="button" data-v="2">2 mm</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="sideboard"> Ta med sidebordet</label>
+
+      <div class="summary" id="summary"></div>
+      <button class="btn primary big" id="pdf-btn" disabled>Skapa PDF</button>
+      <div class="result" id="result" hidden></div>
+    </aside>
+  </main>
+
+  <div class="dropzone" id="dropzone"><div>Släpp .o8d-filen här</div></div>
+  <div class="lightbox" id="lightbox" hidden><div class="lb-inner" id="lb-inner"></div></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

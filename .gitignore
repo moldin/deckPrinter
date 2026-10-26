@@ -1,0 +1,6 @@
+lotr/
+arkham/
+.cache/
+.venv/
+__pycache__/
+*.pdf

@@ -4,6 +4,7 @@
 """
 import argparse
 import collections
+import logging
 import os
 import re
 import subprocess
@@ -14,6 +15,7 @@ import time
 import uuid
 import webbrowser
 
+import flask.cli
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from PIL import Image
 from werkzeug.exceptions import HTTPException
@@ -85,7 +87,19 @@ class Sync:
             if done is not None and stage:
                 break
         return {"running": running, "game": self.game, "returncode": self.returncode,
-                "stage": stage, "done": done, "total": total, "log": list(self.lines)[-8:]}
+                "stage": friendly_stage(stage), "done": done, "total": total, "log": list(self.lines)[-8:]}
+
+
+def friendly_stage(line):
+    """The sync CLI prints developer-oriented lines; the page shows plain words."""
+    if not line:
+        return None
+    if line.startswith("Fetching"):
+        return "Getting the list of cards…"
+    if line.startswith("Syncing"):
+        kind = "encounter and scenario" if "DragnCards" in line else "card"
+        return f"Downloading {kind} images…"
+    return line
 
 
 sync = Sync()
@@ -291,6 +305,10 @@ def main():
     print("Keep this window open while you use it. Close it (or press Ctrl+C) to stop Deckprint.\n")
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    # Keep the console readable for non-technical users: no "development server" banner or
+    # per-request log lines (this server only ever listens on 127.0.0.1).
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    flask.cli.show_server_banner = lambda *a, **k: None
     app.run(host="127.0.0.1", port=args.port, threaded=True)
 
 

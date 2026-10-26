@@ -1,6 +1,6 @@
 """CLI:
   python3 -m cardimages lotr sync [--encounter] [--no-hob] [--workers 4]
-  python3 -m cardimages arkham sync
+  python3 -m cardimages arkham sync [--encounter]
   python3 -m cardimages <game> deck <url | id | file.o8d> [--json] [--copy-to DIR]
   python3 -m cardimages <game> status
 """
@@ -52,7 +52,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="download new/missing images and rebuild the index")
     s.add_argument("--workers", type=int, default=4)
-    s.add_argument("--encounter", action="store_true", help="lotr: also mirror all DragnCards cards")
+    s.add_argument("--encounter", action="store_true",
+                   help="also download encounter/quest/scenario cards (remembered for later syncs)")
     s.add_argument("--recheck-backs", action="store_true", help="lotr: look for back sides again")
     s.add_argument("--no-hob", action="store_true", help="lotr: skip the Hall of Beorn upgrade pass")
     d = sub.add_parser("deck", help="resolve a deck to local image files")
@@ -62,9 +63,9 @@ def main():
     sub.add_parser("status")
     args = ap.parse_args()
     if args.cmd == "sync":
-        kw = {"workers": args.workers}
+        kw = {"workers": args.workers, "encounter": args.encounter}
         if args.game == "lotr":
-            kw.update(encounter=args.encounter, recheck_backs=args.recheck_backs, hob=not args.no_hob)
+            kw.update(recheck_backs=args.recheck_backs, hob=not args.no_hob)
         GAMES[args.game].sync(args.root, **kw)
     elif args.cmd == "deck":
         sys.exit(cmd_deck(args))

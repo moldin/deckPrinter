@@ -37,14 +37,18 @@ def back_kind(card):
     return "player"
 
 
-def sync(root=DEFAULT_ROOT, workers=4, **_):
+def sync(root=DEFAULT_ROOT, workers=4, encounter=False, **_):
+    """Player cards only by default (~1,800 cards); encounter=True adds every scenario card.
+    Once encounter cards are in the index, later syncs keep including them."""
     game_dir = os.path.join(root, GAME)
     images_dir = os.path.join(game_dir, "images")
     os.makedirs(images_dir, exist_ok=True)
-    old = (load_index(root, GAME) or {}).get("cards", {})
+    previous = load_index(root, GAME) or {}
+    old = previous.get("cards", {})
+    encounter = encounter or previous.get("encounter", False)
 
-    print("Fetching ArkhamDB card list (incl. encounter cards)…")
-    cards = fetch_json(f"{ARKHAMDB}/api/public/cards/?encounter=1")
+    print(f"Fetching ArkhamDB card list{' (incl. encounter cards)' if encounter else ''}…")
+    cards = fetch_json(f"{ARKHAMDB}/api/public/cards/" + ("?encounter=1" if encounter else ""))
     with open(os.path.join(game_dir, "arkhamdb_cards.json"), "w", encoding="utf-8") as f:
         json.dump(cards, f, ensure_ascii=False)
 
@@ -79,7 +83,7 @@ def sync(root=DEFAULT_ROOT, workers=4, **_):
         if not r["faces"] and orig and orig["faces"]:
             r["faces"], r["faces_from"] = orig["faces"], orig["code"]
 
-    index = {"cards": by_code, "card_backs": fetch_card_backs(game_dir, CARD_BACKS),
+    index = {"cards": by_code, "encounter": encounter, "card_backs": fetch_card_backs(game_dir, CARD_BACKS),
              "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     save_index(root, GAME, index)
     missing = [r for r in by_code.values() if not r["faces"]]

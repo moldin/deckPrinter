@@ -121,7 +121,7 @@ textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in
 .summary .warn { color: var(--warn); font-size: 13px; margin-top: 6px; }
 .result { margin-top: 14px; padding: 12px; border-radius: 8px; font-size: 13.5px;
   background: color-mix(in srgb, var(--lotr) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--lotr) 35%, transparent); }
-.result b { display: block; margin-bottom: 4px; }
+
 .result ul { margin: 6px 0 0; padding-left: 18px; }
 .result a { color: var(--accent); }
 
@@ -140,3 +140,30 @@ body.dragging .dropzone { display: grid; }
 .lightbox { position: fixed; inset: 0; background: rgba(10,9,7,.82); z-index: 30; display: grid; place-items: center; cursor: zoom-out; }
 .lb-inner { display: flex; gap: 18px; max-width: 94vw; max-height: 90vh; }
 .lb-inner img { max-height: 86vh; max-width: 45vw; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+
+/* ---------- card images: header button, welcome, modal, progress ---------- */
+.top-right { display: flex; align-items: center; gap: 12px; }
+.btn.small { padding: 6px 12px; font-size: 13px; }
+.welcome { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px; box-shadow: var(--shadow); }
+.welcome h2 { margin: 0 0 6px; font: 600 20px/1.2 Georgia, serif; }
+.welcome p { margin: 0 0 14px; color: var(--muted); max-width: 64ch; }
+.game-rows { display: grid; gap: 10px; }
+.game-row { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.game-name { font-weight: 600; }
+.game-row .hint { margin-top: 2px; }
+.check.small { font-size: 13px; margin: 6px 0 0; }
+.progress { grid-column: 1 / -1; }
+.progress .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 4px 0 6px; }
+.progress .bar i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.progress.done { color: var(--lotr); font-weight: 600; font-size: 14px; }
+.progress.failed { color: var(--bad); font-size: 14px; }
+.progress pre { white-space: pre-wrap; font-size: 11.5px; color: var(--muted); margin: 6px 0 0; max-height: 120px; overflow: auto; }
+.modal { position: fixed; inset: 0; background: rgba(10, 9, 7, .55); z-index: 25; display: grid; place-items: center; padding: 16px; }
+.modal-box { background: var(--surface); border-radius: 12px; padding: 18px 20px 20px; width: min(640px, 100%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .35); max-height: 90vh; overflow: auto; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h2 { margin: 0; font: 600 19px/1.2 Georgia, serif; }
+.modal-box > .hint { margin: 8px 0 14px; }
+.result strong { display: block; margin-bottom: 4px; }

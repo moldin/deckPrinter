@@ -3,8 +3,11 @@
   .venv/bin/python -m webapp.server            # opens http://127.0.0.1:8790
 """
 import argparse
+import collections
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -17,9 +20,10 @@ from werkzeug.exceptions import HTTPException
 
 import deckprint
 from cardimages import GAMES, open_store
-from cardimages.common import DEFAULT_ROOT
+from cardimages.common import DEFAULT_ROOT, disk_usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+GAME_LABEL = {"lotr": "LotR", "arkham": "Arkham"}
 THUMBS = os.path.join(DEFAULT_ROOT, ".cache", "thumbs")
 THUMB_PX = 260
 
@@ -29,12 +33,62 @@ decks = {}              # deck id -> {"game", "deck"}; what /api/pdf prints from
 decks_lock = threading.Lock()
 
 
-def load_stores():
-    for game in GAMES:
-        try:
-            stores[game] = open_store(game)
-        except SystemExit as e:
-            print(f"  {game}: {e}")
+def load_store(game):
+    try:
+        stores[game] = open_store(game)
+    except SystemExit:
+        stores.pop(game, None)
+        print(f"  {GAME_LABEL[game]}: no card images yet - download them from the web page")
+
+
+class Sync:
+    """One image download at a time, run as `python -m cardimages <game> sync` in a child
+    process so a crash or Ctrl-C there never takes the web server down. The page polls
+    /api/sync for progress."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.proc = None
+        self.game = None
+        self.lines = collections.deque(maxlen=200)
+        self.returncode = None
+
+    def start(self, game, encounter):
+        with self.lock:
+            if self.proc and self.proc.poll() is None:
+                abort(409, f"{GAME_LABEL[self.game]} images are already downloading")
+            cmd = [sys.executable, "-u", "-m", "cardimages", game, "sync"] + (["--encounter"] if encounter else [])
+            # UTF-8 pipe even on Windows, where the default code page can't encode some card names.
+            env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+            self.proc = subprocess.Popen(cmd, cwd=DEFAULT_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True, encoding="utf-8", errors="replace", env=env)
+            self.game, self.returncode = game, None
+            self.lines.clear()
+        threading.Thread(target=self._pump, args=(self.proc, game), daemon=True).start()
+
+    def _pump(self, proc, game):
+        for line in proc.stdout:
+            self.lines.append(line.rstrip())
+        self.returncode = proc.wait()
+        load_store(game)
+
+    def state(self):
+        running = bool(self.proc and self.proc.poll() is None)
+        done = total = None
+        stage = None
+        for line in reversed(self.lines):
+            m = re.match(r"\s+(\d+)/(\d+)$", line)
+            if m and done is None:
+                done, total = int(m.group(1)), int(m.group(2))
+            elif not m and line.strip() and stage is None:
+                stage = line.strip()
+            if done is not None and stage:
+                break
+        return {"running": running, "game": self.game, "returncode": self.returncode,
+                "stage": stage, "done": done, "total": total, "log": list(self.lines)[-8:]}
+
+
+sync = Sync()
 
 
 def detect_game(source, fallback):
@@ -84,11 +138,32 @@ def index():
 @app.get("/api/status")
 def status():
     out = {}
-    for game, store in stores.items():
+    for game in GAMES:
+        store = stores.get(game)
+        if not store:
+            out[game] = None
+            continue
         idx = store.index
         cards = idx.get("by_octgnid") or idx.get("cards") or {}
-        out[game] = {"generated": idx.get("generated"), "cards": len(cards)}
-    return jsonify(out)
+        files, size = disk_usage(store.game_dir)
+        out[game] = {"generated": idx.get("generated"), "cards": len(cards), "size_mb": round(size / 1e6),
+                     "encounter": bool(idx.get("encounter") or idx.get("dragncards"))}
+    return jsonify({"games": out, "sync": sync.state()})
+
+
+@app.get("/api/sync")
+def sync_state():
+    return jsonify(sync.state())
+
+
+@app.post("/api/sync")
+def sync_start():
+    body = request.get_json(force=True)
+    game = body.get("game")
+    if game not in GAMES:
+        abort(400, "Unknown game")
+    sync.start(game, bool(body.get("encounter")))
+    return jsonify(sync.state())
 
 
 @app.post("/api/resolve")
@@ -100,7 +175,7 @@ def resolve():
     for src in sources:
         game = detect_game(src, fallback)
         if game not in stores:
-            errors.append(f"{src}: ingen bildsamling för {game} - kör sync först")
+            errors.append(f"{src}: no {GAME_LABEL[game]} card images yet - download them first (Card images ▸ Download)")
             continue
         try:
             for deck in stores[game].load(src):
@@ -114,6 +189,8 @@ def resolve():
 def upload_o8d():
     files = request.files.getlist("file")
     result, errors = [], []
+    if "lotr" not in stores:
+        abort(409, "No LotR card images yet - download them first (Card images ▸ Download)")
     for f in files:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, os.path.basename(f.filename or "deck.o8d"))
@@ -135,7 +212,7 @@ def make_pdf():
     started = time.time()
     for group, (stored, quantities) in enumerate(chosen):
         if not stored:
-            abort(410, "Leken har gått ut (servern startades om) - hämta den igen")
+            abort(410, "This deck expired because Deckprint was restarted - remove it and paste the link again")
         entries = []
         for i, e in enumerate(stored["deck"]["entries"]):
             qty = int(quantities.get(str(i), e["qty"]))
@@ -146,7 +223,7 @@ def make_pdf():
             # Quantities already reflect the sideboard choice made in the page.
             slots += deckprint.slots_for(entries, sideboard=True, backs=opts.get("backs", "auto"), group=group)[0]
     if not slots:
-        abort(400, "Inga kort valda")
+        abort(400, "No cards selected")
     pages, duplex, data = deckprint.render(
         slots, None, paper=opts.get("paper", "a4"), gap=float(opts.get("gap", 0)),
         backs=opts.get("backs", "auto"))
@@ -207,9 +284,11 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
     print("Loading card indexes…")
-    load_stores()
+    for game in GAMES:
+        load_store(game)
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Deckprint running at {url}")
+    print(f"\nDeckprint is running at {url}")
+    print("Keep this window open while you use it. Close it (or press Ctrl+C) to stop Deckprint.\n")
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=args.port, threaded=True)

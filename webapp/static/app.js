@@ -1,13 +1,21 @@
-// Deckprint front end: fetch decks, edit quantities, request the PDF.
+// Deckprint front end: manage card images, load decks, edit quantities, request the PDF.
 const $ = (sel) => document.querySelector(sel);
 const state = {
   decks: [],                                  // payloads from /api/resolve with .qty edited in place
   options: { paper: "a4", backs: "auto", gap: "0" },
   sideboard: false,
+  games: {},                                  // /api/status games: null when not downloaded yet
+  sync: null,                                 // /api/status sync state
 };
-const SECTION_LABEL = { Hero: "Hjältar", Main: "Lek", Sideboard: "Sidebord", Investigator: "Investigator" };
+const SECTION_LABEL = { Hero: "Heroes", Main: "Deck", Sideboard: "Sideboard", Investigator: "Investigator" };
 const PER_PAGE = { standard: 9, mini: 16 };
 const RECENT_KEY = "deckprint.recent";
+const GAMES = {
+  lotr: { label: "The Lord of the Rings LCG", short: "LotR", size: "about 1 GB", extra: "+1.3 GB",
+          note: "Player cards incl. ALeP community packs" },
+  arkham: { label: "Arkham Horror LCG", short: "Arkham", size: "about 0.5 GB", extra: "+1.6 GB",
+            note: "Player cards incl. investigators" },
+};
 
 // ---------- persistence (per browser, best effort) ----------
 const store = {
@@ -16,6 +24,101 @@ const store = {
 };
 Object.assign(state.options, store.get("deckprint.options", {}));
 state.sideboard = store.get("deckprint.sideboard", false);
+
+// ---------- card images (download / update) ----------
+async function loadStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    state.games = s.games;
+    state.sync = s.sync;
+  } catch {
+    $("#library").textContent = "Deckprint is not running - start it again";
+    return;
+  }
+  renderLibrary();
+  if (state.sync.running) pollSync();
+}
+
+function renderLibrary() {
+  const parts = Object.entries(GAMES).map(([g, info]) => {
+    const s = state.games[g];
+    return s ? `${info.short}: ${s.cards.toLocaleString("en")} cards` : `${info.short}: not downloaded`;
+  });
+  $("#library").textContent = parts.join(" · ");
+  const none = Object.values(state.games).every((s) => !s);
+  $("#welcome").hidden = !none;
+  $("#intake").hidden = none;
+  $("#empty").hidden = none || state.decks.length > 0;
+  document.querySelectorAll(".game-rows").forEach(renderGameRows);
+}
+
+function renderGameRows(box) {
+  const sync = state.sync || {};
+  box.innerHTML = "";
+  for (const [g, info] of Object.entries(GAMES)) {
+    const s = state.games[g];
+    const busy = sync.running && sync.game === g;
+    const row = document.createElement("div");
+    row.className = "game-row";
+    const status = s
+      ? `${s.cards.toLocaleString("en")} cards · ${(s.size_mb / 1000).toFixed(1)} GB · updated ${new Date(s.generated).toLocaleDateString()}`
+        + (s.encounter ? " · incl. encounter cards" : "")
+      : `Not downloaded yet · ${info.size}`;
+    row.innerHTML = `
+      <div class="game-info">
+        <div class="game-name">${info.label}</div>
+        <div class="hint">${info.note}. ${status}</div>
+        ${s && s.encounter ? "" : `<label class="check small"><input type="checkbox" data-enc> Also encounter, quest &amp; scenario cards (${info.extra})</label>`}
+      </div>
+      <button class="btn ${s ? "" : "primary"}" ${sync.running ? "disabled" : ""}>${s ? "Update" : "Download"}</button>
+      ${busy || (sync.game === g && sync.returncode !== null && sync.returncode !== undefined) ? progressHtml(sync) : ""}`;
+    row.querySelector("button").onclick = () => startSync(g, !!row.querySelector("[data-enc]")?.checked);
+    box.appendChild(row);
+  }
+}
+
+function progressHtml(sync) {
+  if (!sync.running) {
+    return sync.returncode === 0
+      ? `<div class="progress done">Done. You can load decks now.</div>`
+      : `<div class="progress failed">The download stopped with an error. Check your internet connection and press the button again; it continues where it left off.<pre>${escapeHtml(sync.log.join("\n"))}</pre></div>`;
+  }
+  const pct = sync.total ? Math.round((100 * sync.done) / sync.total) : 0;
+  return `<div class="progress">
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="hint">${escapeHtml(sync.stage || "Starting…")}${sync.total ? ` - ${sync.done.toLocaleString("en")} / ${sync.total.toLocaleString("en")}` : ""}</div>
+      <div class="hint">This can take 10-30 minutes the first time. You can keep using Deckprint meanwhile, but leave the Deckprint window open.</div>
+    </div>`;
+}
+
+async function startSync(game, encounter) {
+  const res = await fetch("/api/sync", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game, encounter }),
+  });
+  const data = await res.json();
+  if (!res.ok) { showErrors([data.error || res.statusText]); return; }
+  state.sync = data;
+  renderLibrary();
+  pollSync();
+}
+
+let polling = false;
+async function pollSync() {
+  if (polling) return;
+  polling = true;
+  while (true) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try { state.sync = await (await fetch("/api/sync")).json(); } catch { break; }
+    if (!state.sync.running) break;
+    document.querySelectorAll(".game-rows").forEach(renderGameRows);
+  }
+  polling = false;
+  await loadStatus();
+}
+
+$("#images-btn").onclick = () => { $("#images-modal").hidden = false; };
+$("#images-close").onclick = () => { $("#images-modal").hidden = true; };
+$("#images-modal").onclick = (ev) => { if (ev.target.id === "images-modal") $("#images-modal").hidden = true; };
 
 // ---------- fetching decks ----------
 async function fetchDecks(sources) {
@@ -36,7 +139,7 @@ async function fetchDecks(sources) {
       $("#sources").value = "";
     }
   } catch (err) {
-    showErrors([`Kunde inte nå servern: ${err.message}`]);
+    showErrors([`Could not reach Deckprint: ${err.message}. Is the Deckprint window still open?`]);
   } finally {
     btn.classList.remove("busy"); btn.disabled = false;
   }
@@ -47,6 +150,7 @@ async function uploadO8d(files) {
   [...files].forEach((f) => form.append("file", f));
   const res = await fetch("/api/o8d", { method: "POST", body: form });
   const data = await res.json();
+  if (!res.ok) { showErrors([data.error || res.statusText]); return; }
   addDecks(data.decks, data.errors);
 }
 
@@ -87,11 +191,11 @@ function renderRecent() {
   }
 }
 
-// ---------- rendering ----------
+// ---------- rendering decks ----------
 function render() {
   const root = $("#decks");
   root.innerHTML = "";
-  $("#empty").hidden = state.decks.length > 0;
+  $("#empty").hidden = state.decks.length > 0 || $("#intake").hidden;
   state.decks.forEach((deck, di) => root.appendChild(renderDeck(deck, di)));
   renderSummary();
 }
@@ -103,15 +207,15 @@ function renderDeck(deck, di) {
   const title = deck.url ? `<a href="${deck.url}" target="_blank" rel="noopener">${escapeHtml(deck.name)}</a>` : escapeHtml(deck.name);
   el.innerHTML = `
     <div class="deck-head">
-      <span class="badge ${deck.game}">${deck.game === "lotr" ? "LotR" : "Arkham"}</span>
+      <span class="badge ${deck.game}">${GAMES[deck.game].short}</span>
       <h3>${title}</h3>
-      <span class="deck-count">${total} kort</span>
-      <button class="icon-btn" title="Ta bort leken">✕</button>
+      <span class="deck-count">${total} cards</span>
+      <button class="icon-btn" title="Remove this deck">✕</button>
     </div>
     <div class="deck-tools">
-      <button class="link-btn" data-act="all">Alla kort</button>·
-      <button class="link-btn" data-act="none">Inga kort</button>·
-      <button class="link-btn" data-act="one">1 av varje</button>
+      <button class="link-btn" data-act="all">All cards</button>·
+      <button class="link-btn" data-act="none">No cards</button>·
+      <button class="link-btn" data-act="one">One of each</button>
     </div>`;
   el.querySelector(".icon-btn").onclick = () => { state.decks.splice(di, 1); hideResult(); render(); };
   el.querySelectorAll(".deck-tools button").forEach((b) => b.onclick = () => {
@@ -119,7 +223,7 @@ function renderDeck(deck, di) {
       if (e.missing) continue;
       e.qty = b.dataset.act === "all" ? e.orig : b.dataset.act === "none" ? 0 : 1;
     }
-    render();
+    hideResult(); render();
   });
 
   const sections = [];
@@ -136,24 +240,24 @@ function renderDeck(deck, di) {
     el.appendChild(h);
     const grid = document.createElement("div");
     grid.className = "grid";
-    s.entries.forEach((e) => grid.appendChild(renderTile(deck, e)));
+    s.entries.forEach((e) => grid.appendChild(renderTile(e)));
     el.appendChild(grid);
   }
   return el;
 }
 
-function renderTile(deck, e) {
+function renderTile(e) {
   const t = document.createElement("div");
   t.className = "tile" + (e.landscape ? " landscape" : "") + (e.qty === 0 ? " off" : "");
   const flags = [];
-  if (e.double_sided) flags.push(`<span class="flag">2-sidig</span>`);
-  if (e.landscape) flags.push(`<span class="flag">liggande</span>`);
+  if (e.double_sided) flags.push(`<span class="flag">2-sided</span>`);
+  if (e.landscape) flags.push(`<span class="flag">landscape</span>`);
   if (e.size === "mini") flags.push(`<span class="flag">mini</span>`);
-  if (e.low_res) flags.push(`<span class="flag warn">låg upplösning</span>`);
+  if (e.low_res) flags.push(`<span class="flag warn">low res</span>`);
   t.innerHTML = `
-    <div class="img">${e.thumb ? `<img loading="lazy" src="${e.thumb}" alt="">` : `<div class="missing">Bild saknas</div>`}</div>
+    <div class="img">${e.thumb ? `<img loading="lazy" src="${e.thumb}" alt="">` : `<div class="missing">No image</div>`}</div>
     <div class="flags">${flags.join("")}</div>
-    ${e.missing ? "" : `<div class="stepper"><button data-d="-1">−</button><span>${e.qty}</span><button data-d="1">+</button></div>`}
+    ${e.missing ? "" : `<div class="stepper"><button data-d="-1" title="One less">−</button><span>${e.qty}</span><button data-d="1" title="One more">+</button></div>`}
     <div class="name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</div>`;
   t.querySelectorAll(".stepper button").forEach((b) => b.onclick = () => {
     e.qty = Math.max(0, Math.min(9, e.qty + Number(b.dataset.d)));
@@ -185,15 +289,15 @@ function estimate() {
 function renderSummary() {
   const { cards, backs, missing, pages } = estimate();
   $("#summary").innerHTML = cards ? `
-      <div class="big-num">${cards} kort</div>
-      <div class="sub">≈ ${pages} sidor${backs ? ` · ${backs} dubbelsidiga` : ""}</div>
-      ${missing ? `<div class="warn">${missing} kort saknar bild och hoppas över</div>` : ""}`
-    : `<div class="sub">Välj kort för att skriva ut.</div>`;
+      <div class="big-num">${cards} cards</div>
+      <div class="sub">≈ ${pages} pages${backs ? ` · ${backs} double-sided` : ""}</div>
+      ${missing ? `<div class="warn">${missing} cards have no image and will be skipped</div>` : ""}`
+    : `<div class="sub">Load a deck to print it.</div>`;
   $("#pdf-btn").disabled = cards === 0;
   const hints = {
-    auto: "Baksidesark bara där det finns dubbelsidiga kort.",
-    all: "Alla kort får baksida (tryckt eller standardbaksida).",
-    none: "Bara framsidor.",
+    auto: "Back pages only where the deck has double-sided cards.",
+    all: "Every card gets a back (its printed back or the standard card back).",
+    none: "Fronts only.",
   };
   $("#backs-hint").textContent = hints[state.options.backs];
 }
@@ -229,7 +333,7 @@ async function makePdf() {
       seconds: res.headers.get("X-Seconds"), mb: (blob.size / 1e6).toFixed(1),
     });
   } catch (err) {
-    showErrors([`PDF misslyckades: ${err.message}`]);
+    showErrors([`Could not create the PDF: ${err.message}`]);
   } finally {
     btn.classList.remove("busy");
     renderSummary();
@@ -238,17 +342,17 @@ async function makePdf() {
 
 function showResult(r) {
   const duplex = r.duplex.length
-    ? `<li>Skriv ut sidorna <b style="display:inline">${r.duplex.map((p) => `${p}–${p + 1}`).join(", ")}</b> dubbelsidigt, vänd längs långsidan.</li>`
+    ? `<li>Print pages <b>${r.duplex.map((p) => `${p}-${p + 1}`).join(", ")}</b> double-sided, flipping on the long edge.</li>`
     : "";
   const box = $("#result");
   box.hidden = false;
   box.innerHTML = `
-    <b>PDF klar: ${r.cards} kort, ${r.pages} sidor</b>
-    <span class="hint">${r.mb} MB på ${r.seconds} s · <a href="${r.url}" download="${escapeHtml(r.name)}">ladda ner igen</a> · <a href="${r.url}" target="_blank">öppna</a></span>
+    <strong>PDF ready: ${r.cards} cards, ${r.pages} pages</strong>
+    <span class="hint">${r.mb} MB in ${r.seconds} s · <a href="${r.url}" download="${escapeHtml(r.name)}">download again</a> · <a href="${r.url}" target="_blank">open</a></span>
     <ul>
-      <li>Skriv ut i <b style="display:inline">100 %</b>, inte "anpassa till sida", annars blir korten fel storlek.</li>
+      <li>Print at <b>100 % / actual size</b>, not "fit to page", or the cards come out the wrong size.</li>
       ${duplex}
-      <li>Skär längs märkena i marginalen.</li>
+      <li>Cut along the marks in the margin.</li>
     </ul>`;
 }
 function hideResult() { $("#result").hidden = true; }
@@ -261,7 +365,9 @@ function openLightbox(e) {
   $("#lightbox").hidden = false;
 }
 $("#lightbox").onclick = () => { $("#lightbox").hidden = true; };
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") $("#lightbox").hidden = true; });
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") { $("#lightbox").hidden = true; $("#images-modal").hidden = true; }
+});
 
 // ---------- options ----------
 document.querySelectorAll(".seg").forEach((seg) => {
@@ -317,16 +423,6 @@ function filenameFrom(header) {
   if (star) return decodeURIComponent(star[1]);
   const plain = /filename="?([^";]+)"?/i.exec(header);
   return plain && plain[1];
-}
-
-async function loadStatus() {
-  try {
-    const s = await (await fetch("/api/status")).json();
-    const part = (g, label) => s[g]
-      ? `${label}: ${s[g].cards.toLocaleString("sv")} kort, synkad ${new Date(s[g].generated).toLocaleDateString("sv")}`
-      : `${label}: ingen bildsamling`;
-    $("#library").textContent = `${part("lotr", "LotR")} · ${part("arkham", "Arkham")}`;
-  } catch { $("#library").textContent = "Servern svarar inte"; }
 }
 
 renderRecent();

@@ -41,7 +41,7 @@ def run_parallel(fn, items, workers):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for i, r in enumerate(pool.map(fn, items), 1):
             results.append(r)
-            if i % 250 == 0 or i == len(items):
+            if i % 50 == 0 or i == len(items):
                 print(f"  {i}/{len(items)}", flush=True)
     return results
 
